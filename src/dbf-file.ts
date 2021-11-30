@@ -44,6 +44,10 @@ export class DBFFile {
         return readRecordsFromDBF(this, maxCount);
     }
 
+    readRecordsWithFilter(filter: Function, maxCount = 10000000) {
+        return readRecordsFromDBF(this, maxCount, filter);
+    }
+
     /** Appends the specified records to this DBF file. */
     appendRecords(records: any[]) {
         return appendRecordsToDBF(this, records);
@@ -259,7 +263,7 @@ async function createDBF(path: string, fields: FieldDescriptor[], opts?: CreateO
 
 
 // Private implementation of DBFFile#readRecords
-async function readRecordsFromDBF(dbf: DBFFile, maxCount: number) {
+async function readRecordsFromDBF(dbf: DBFFile, maxCount: number, callback?: Function) {
     let fd = 0;
     let memoFd = 0;
     try {
@@ -278,7 +282,7 @@ async function readRecordsFromDBF(dbf: DBFFile, maxCount: number) {
         if (dbf._memoPath) {
             memoFd = await open(dbf._memoPath, 'r');
             if (dbf._version === 0x30) {
-                // FoxPro9 
+                // FoxPro9
                 await read(memoFd, buffer, 0, 2, 6);
                 memoBlockSize = buffer.readUInt16BE(0) || 512;
             } else {
@@ -296,7 +300,7 @@ async function readRecordsFromDBF(dbf: DBFFile, maxCount: number) {
         // Create a convenience function for extracting strings from the buffer.
         let substr = (start: number, len: number, enc: string) => iconv.decode(buffer.slice(start, start + len), enc);
 
-        let toInt = (start: number, len: number) => buffer.slice(start, start + len).readInt32LE(0);
+        let toInt = (start: number, len: number) => buffer.slice(start, start + len).readUInt16BE(0);
 
         // Read records in chunks, until enough records have been read.
         let records: Array<Record<string, unknown> & {[DELETED]?: true}> = [];
@@ -457,7 +461,7 @@ async function readRecordsFromDBF(dbf: DBFFile, maxCount: number) {
                                         len = memoBuf.readInt32BE(4);
                                         skip = 8;
                                     }
-                                    
+
                                     // Read the chunk of memo data, and break out of the loop when all read.
                                     let take = Math.min(len, memoBlockSize - skip);
                                     value += iconv.decode(memoBuf.slice(skip, skip + take), encoding);
@@ -489,9 +493,14 @@ async function readRecordsFromDBF(dbf: DBFFile, maxCount: number) {
 
                 // If the record is marked as deleted, add the `[DELETED]` flag.
                 if (isDeleted) record[DELETED] = true;
-
-                // Add the record to the result.
-                records.push(record);
+                // Add the record to the result only if accepted by the callback
+                if (callback == undefined) {
+                    records.push(record);
+                } else {
+                    if (callback() == true){
+                        records.push(record)
+                    }
+                }
             }
         }
 
@@ -677,3 +686,4 @@ function getEncodingForField(field: FieldDescriptor, encoding: Encoding) {
     if (typeof encoding === 'string') return encoding;
     return encoding[field.name] || encoding.default;
 }
+
